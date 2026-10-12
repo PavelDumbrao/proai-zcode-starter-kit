@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.env.*
+!*.env.example
+*secret*
+*token*
+*credential*
+*.proai-backup-*
+*.pem
+*.key
