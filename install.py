@@ -6,6 +6,7 @@ Never transmits, prints, or copies existing configuration values outside local b
 """
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,8 +18,11 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parent
 SKILL_NAMES = ('proai-first-project', 'proai-api-basics', 'proai-debug-and-test', 'proai-ui-quality')
-RULES_START = '<!-- PROAI_STARTER_RULES_BEGIN:v1 -->'
-RULES_END = '<!-- PROAI_STARTER_RULES_END:v1 -->'
+RULES_START = '<!-- PROAI_STARTER_RULES_BEGIN:v2 -->'
+RULES_END = '<!-- PROAI_STARTER_RULES_END:v2 -->'
+OLD_RULES_START = '<!-- PROAI_STARTER_RULES_BEGIN:v1 -->'
+OLD_RULES_END = '<!-- PROAI_STARTER_RULES_END:v1 -->'
+OLD_RULES_SHA256 = 'e5ce330f36d020467797483a183cf774064bc4ea23bdb9a113b86a3cbd273fed'
 HOOKS = {
     'PreToolUse': ('proai_pre_tool_use.py', 'Bash|execute_command|shell', 5),
     'PostToolUse': ('proai_post_tool_use.py', 'Write|Edit|MultiEdit', 5),
@@ -83,14 +87,32 @@ def hook_command(home, filename):
 
 def desired_rules(home, text):
     block = (ROOT / 'rules.md').read_text(encoding='utf-8').strip()
-    if RULES_START not in block or RULES_END not in block:
-        raise InstallationError('Учебные правила не содержат корректные метки')
+    if block.count(RULES_START) != 1 or block.count(RULES_END) != 1:
+        raise InstallationError('Учебные правила не содержат корректные метки v2')
     if text is None:
         return block + '\n'
-    if RULES_START in text:
-        if RULES_END not in text:
-            raise InstallationError('Неполный блок PROAI в AGENTS.md: оставляем файл без изменений')
+    # When an already-installed v2 block has been edited, never overwrite it:
+    # the owner may have personalized that portion of their instructions.
+    if RULES_START in text or RULES_END in text:
+        if text.count(RULES_START) != 1 or text.count(RULES_END) != 1:
+            raise InstallationError('Неполный/повторный PROAI v2 блок в AGENTS.md')
+        start = text.index(RULES_START)
+        end = text.index(RULES_END) + len(RULES_END)
+        if end <= start:
+            raise InstallationError('Нарушен порядок меток PROAI v2')
+        if text[start:end] != block[block.index(RULES_START):block.index(RULES_END)+len(RULES_END)]:
+            raise InstallationError('PROAI v2 правила изменены пользователем: не перезаписываю')
         return text
+    # v1->v1.1 migration is allowed ONLY for the exact stock v1 rules.
+    if OLD_RULES_START in text or OLD_RULES_END in text:
+        if text.count(OLD_RULES_START) != 1 or text.count(OLD_RULES_END) != 1:
+            raise InstallationError('Неполный/повторный старый PROAI блок в AGENTS.md')
+        start = text.index(OLD_RULES_START)
+        end = text.index(OLD_RULES_END) + len(OLD_RULES_END)
+        old = text[start:end]
+        if hashlib.sha256(old.encode('utf-8')).hexdigest() != OLD_RULES_SHA256:
+            raise InstallationError('Старые PROAI правила изменены пользователем: не перезаписываю')
+        return text[:start] + block + text[end:]
     return text.rstrip() + '\n\n' + block + '\n'
 
 

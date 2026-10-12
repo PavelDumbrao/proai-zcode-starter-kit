@@ -40,7 +40,10 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
         body = (self.home / 'AGENTS.md').read_text()
         self.assertIn('# Existing personal rules', body)
-        self.assertEqual(body.count('PROAI_STARTER_RULES_BEGIN:v1'), 1)
+        self.assertEqual(body.count('PROAI_STARTER_RULES_BEGIN:v2'), 1)
+        self.assertIn('Общайся **на русском**', body)
+        self.assertIn('интернет-поиск', body)
+        self.assertIn('Не останавливайся за разрешением', body)
         c = json.loads(self.conf.read_text())
         self.assertEqual(c['mcp'], self.original['mcp'])
         self.assertEqual(c['hooks']['events']['SessionStart'], self.original['hooks']['events']['SessionStart'])
@@ -54,6 +57,38 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(len(json.loads(self.conf.read_text())['hooks']['events']['PreToolUse']), 1)
         self.assertEqual(len(list(self.home.glob('AGENTS.md.proai-backup-*'))), 1)
         self.assertEqual(self.run_installer('--verify', '--with-hooks').returncode, 0)
+
+    def test_upgrade_stock_v1_rules_preserves_surrounding_text(self):
+        original = (BASE / 'tests' / 'fixtures' / 'rules_v1.md').read_text(encoding='utf-8')
+        self.assertIn('PROAI_STARTER_RULES_BEGIN:v1', original)
+        existing = '# Original work instructions\nKeep this text.\n\n' + original
+        (self.home / 'AGENTS.md').write_text(existing, encoding='utf-8')
+        out = self.run_installer('--with-hooks')
+        self.assertEqual(out.returncode, 0, out.stdout+out.stderr)
+        after = (self.home / 'AGENTS.md').read_text()
+        self.assertIn('# Original work instructions', after)
+        self.assertIn('Keep this text.', after)
+        self.assertNotIn('PROAI_STARTER_RULES_BEGIN:v1', after)
+        self.assertEqual(after.count('PROAI_STARTER_RULES_BEGIN:v2'), 1)
+        self.assertEqual(self.run_installer('--with-hooks').returncode, 0)
+        self.assertEqual((self.home / 'AGENTS.md').read_text(), after)
+        self.assertEqual(len(list(self.home.glob('AGENTS.md.proai-backup-*'))), 1)
+
+    def test_customized_old_block_fails_closed(self):
+        old = (BASE / 'tests' / 'fixtures' / 'rules_v1.md').read_text(encoding='utf-8')
+        (self.home / 'AGENTS.md').write_text(old.replace('понял → сделал', 'понял → сначала спросил'))
+        out = self.run_installer('--with-hooks')
+        self.assertEqual(out.returncode, 2)
+        self.assertIn('изменены пользователем', out.stderr)
+        self.assertFalse((self.home / 'skills').exists())
+
+    def test_customized_current_block_fails_closed(self):
+        original = (BASE / 'rules.md').read_text(encoding='utf-8')
+        (self.home / 'AGENTS.md').write_text(original.replace('терпеливый наставник','требовательный наставник'))
+        out = self.run_installer('--with-hooks')
+        self.assertEqual(out.returncode, 2)
+        self.assertIn('изменены пользователем', out.stderr)
+        self.assertFalse((self.home / 'skills').exists())
 
     def test_conflict_skips_everything(self):
         target = self.home / 'skills' / 'proai-first-project'
